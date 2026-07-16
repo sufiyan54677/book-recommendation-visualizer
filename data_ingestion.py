@@ -1,19 +1,35 @@
+import pandas as pd
 import logging
-from data_ingestion import load_book_data, DataIngestionError
-from analytics import compute_genre_summary
-from visualization import render_genre_chart
 
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("book_viz.ingestion")
+
+REQUIRED_COLUMNS = {"genre", "rating"}
 
 
-def run_pipeline(csv_path: str):
+class DataIngestionError(Exception):
+    pass
+
+
+def load_book_data(csv_path: str) -> pd.DataFrame:
+    """Load and structurally validate the book ratings CSV."""
     try:
-        df = load_book_data(csv_path)
-        summary = compute_genre_summary(df)
-        render_genre_chart(summary, export_path="genre_ratings.png")
-    except DataIngestionError as e:
-        logging.error("Pipeline aborted: %s", e)
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        logger.error("CSV not found at %s", csv_path)
+        raise DataIngestionError(f"File not found: {csv_path}")
+    except pd.errors.EmptyDataError:
+        logger.error("CSV at %s is empty", csv_path)
+        raise DataIngestionError("The CSV file contains no data")
 
+    missing = REQUIRED_COLUMNS - set(df.columns)
+    if missing:
+        raise DataIngestionError(f"Missing required column(s): {missing}")
 
-if __name__ == "__main__":
-    run_pipeline("config/book_data.csv")  # path now
+    df["rating"] = pd.to_numeric(df["rating"], errors="coerce")
+    dropped = df["rating"].isna().sum()
+    if dropped:
+        logger.warning("Dropping %d rows with non-numeric/missing rating", dropped)
+    df = df.dropna(subset=["rating", "genre"])
+
+    logger.info("Loaded %d valid rows from %s", len(df), csv_path)
+    return df
